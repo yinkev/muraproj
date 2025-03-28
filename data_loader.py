@@ -1,3 +1,4 @@
+import torchvision.transforms as transforms
 import torch
 from torch.utils.data import Dataset
 import pandas as pd
@@ -116,28 +117,66 @@ class MuraDataset(Dataset):
         # -------------------------------------------------
 
         # --- Load Image ---
-        # Construct full path if paths in CSV are relative to base_data_path
-        # Assuming paths in CSV start like 'MURA-v1.1/...' and base_data_path points to folder *containing* MURA-v1.1
-        # full_img_path = os.path.join(self.base_data_path, img_path) # Adjust if needed based on actual paths
-        # If paths in CSV are already like '/Users/kyin/.../MURA-v1.1/train/...' then they might be absolute
-        # Let's assume paths in CSV are like 'MURA-v1.1/train/...' for now
-        # We need to check if base_data_path is the parent of 'MURA-v1.1' or 'MURA-v1.1' itself
-        # Assuming base_data_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1'
-        # And img_path = 'MURA-v1.1/train/XR_SHOULDER/...'
-        # We need to remove the 'MURA-v1.1/' prefix from img_path if base_data_path includes it
-        relative_img_path = img_path.replace('MURA-v1.1/', '', 1) # Remove only the first instance
-        full_img_path = os.path.join(self.base_data_path, relative_img_path)
-        print(f"!!! TODO: Verify full_img_path is correct: {full_img_path} !!!")
+        # Construct the full path to the image file.
+        # We assume img_path from the CSV looks like 'MURA-v1.1/train/XR_SHOULDER/...'
+        # And self.base_data_path points to the directory *containing* 'MURA-v1.1'
+        # OR self.base_data_path points *directly* to 'MURA-v1.1'
+
+        # Let's try to be robust: check if img_path starts with the base_path component
+        base_folder_name = os.path.basename(self.base_data_path) # e.g., 'MURA-v1.1'
+        if img_path.startswith(base_folder_name + '/'):
+            # Path in CSV includes the base folder name, remove it before joining
+            # e.g. img_path = 'MURA-v1.1/train/...', base_path = '.../MURA-v1.1'
+            # relative_path = 'train/...'
+            relative_img_path = img_path.split('/', 1)[1] # Split only on the first '/'
+            full_img_path = os.path.join(self.base_data_path, relative_img_path)
+        elif img_path.startswith('MURA-v1.1/'):
+            # Path in CSV includes 'MURA-v1.1/' but maybe base_path is the parent dir
+            # e.g. img_path = 'MURA-v1.1/train/...', base_path = '.../muraproj'
+            # Check if the 'MURA-v1.1' folder exists within base_path
+            potential_base = os.path.join(self.base_data_path, 'MURA-v1.1')
+            if os.path.isdir(potential_base):
+                # Construct path relative to the parent of base_path? No, relative to base_path
+                # Let's assume base_path IS the parent, so join base_path and img_path
+                full_img_path = os.path.join(self.base_data_path, img_path) # This seems unlikely based on CSVs
+                # Let's reconsider: If base_path is '/Users/.../muraproj' and img_path is 'MURA-v1.1/train/...'
+                # Then full_img_path should be '/Users/.../muraproj/MURA-v1.1/train/...'
+                # Which is os.path.join(base_path, img_path)
+                # This seems less likely given our setup. Let's stick to the first case for now and test.
+
+                # Let's simplify based on our known path:
+                # base_data_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1'
+                # img_path = 'MURA-v1.1/train/XR_SHOULDER/...'
+                # We need '/Users/kyin/Desktop/muraproj/MURA-v1.1/train/XR_SHOULDER/...'
+                # So, remove 'MURA-v1.1/' from img_path and join with base_data_path
+                relative_img_path = img_path.split('/', 1)[1] # Split only on the first '/'
+                full_img_path = os.path.join(self.base_data_path, relative_img_path)
+
+            else:
+                # Cannot determine correct path structure
+                print(f"!!! WARNING: Ambiguous path structure. img_path: {img_path}, base_data_path: {self.base_data_path}")
+                full_img_path = img_path # Fallback, likely incorrect
+
+        else:
+            # Path in CSV might be relative to base_data_path directly (e.g., 'train/XR_SHOULDER/...')
+            full_img_path = os.path.join(self.base_data_path, img_path)
+
+
+        # print(f"Trying to load image from: {full_img_path}") # Uncomment for debugging paths
 
         try:
-            # Open image using Pillow (convert to RGB in case of grayscale)
+            # Open image using Pillow (convert to RGB in case of grayscale/RGBA)
+            # Grayscale images need 3 channels for standard pre-trained models
             image = Image.open(full_img_path).convert('RGB')
         except FileNotFoundError:
-            print(f"!!! ERROR in __getitem__: Image not found at {full_img_path} for index {idx}")
-            # Return None or raise error, or return a placeholder? Decide handling.
-            # For now, let's return None and handle it in the training loop (or make dummy data)
-            # A better approach is to ensure the image_label_list in __init__ is clean.
-            return None, None # Or raise error
+            print(f"!!! ERROR in __getitem__: Image not found at {full_img_path} (derived from img_path: {img_path}) for index {idx}")
+            # Raise error to stop DataLoader if an image is missing
+            raise FileNotFoundError(f"Image not found: {full_img_path}")
+        except Exception as e:
+            print(f"!!! ERROR loading image {full_img_path}: {e}")
+            # Raise error for other image loading issues
+            raise e
+        # -----------------------
 
         # --- Apply transformations ---
         if self.transform:
@@ -145,33 +184,75 @@ class MuraDataset(Dataset):
 
         return image, label
 
-# Example usage (for testing later)
+# Example usage and testing
 if __name__ == '__main__':
-    print("Testing MuraDataset...")
+    print("\n--- Testing MuraDataset ---")
     # Replace with actual paths for testing
     base_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1' # Your path
     train_img_csv = os.path.join(base_path, 'train_image_paths.csv')
     train_lbl_csv = os.path.join(base_path, 'train_labeled_studies.csv')
 
-    # We'll define actual transforms later
-    dummy_transform = None
+    # --- Define Transforms ---
+    # Common practice: Resize to input size expected by pre-trained models (e.g., 224x224 or 320x320)
+    # Use ImageNet mean and std dev for normalization with transfer learning
+    image_size = 224 # Or 320, depending on model choice later
+    imagenet_mean = [0.485, 0.456, 0.406]
+    imagenet_std = [0.229, 0.224, 0.225]
 
-    # Create dataset instance (will print TODOs)
+    # Define separate transforms for training (with augmentation) and validation (without)
+    # For testing the dataset class itself, we only need a basic transform for now
+    basic_transform = transforms.Compose([
+        transforms.Resize((image_size, image_size)), # Resize the image
+        transforms.ToTensor(), # Convert PIL Image to PyTorch Tensor (scales to [0, 1])
+        transforms.Normalize(mean=imagenet_mean, std=imagenet_std) # Normalize using ImageNet stats
+    ])
+    print(f"Using basic transform with image size: {image_size}x{image_size}")
+    # -------------------------
+
+    # Create dataset instance
     try:
+        print("\nCreating dataset instance...")
         train_dataset = MuraDataset(
             csv_image_paths=train_img_csv,
             csv_study_labels=train_lbl_csv,
             base_data_path=base_path,
-            transform=dummy_transform
+            transform=basic_transform # Use the defined transform
         )
-        print(f"Dataset created. Length (placeholder): {len(train_dataset)}")
+        print(f"Dataset created successfully. Length: {len(train_dataset)}")
 
-        # TODO: Test __getitem__ once implemented
-        # if len(train_dataset) > 0:
-        #     img, lbl = train_dataset[0]
-        #     if img is not None:
-        #         print("Successfully loaded first item.")
-        #         # print(f"Image shape/type: {img.shape}, {img.dtype}") # Requires transform to tensor
-        #         print(f"Label: {lbl}")
+        # --- Test __getitem__ ---
+        if len(train_dataset) > 0:
+            print("\nAttempting to load first item using __getitem__...")
+            # Fetch the first sample (index 0)
+            image_tensor, label = train_dataset[0]
+
+            if image_tensor is not None:
+                print("Successfully loaded first item (Index 0).")
+                print(f"  Image Tensor Shape: {image_tensor.shape}") # Should be [3, image_size, image_size]
+                print(f"  Image Tensor Datatype: {image_tensor.dtype}") # Should be torch.float32
+                print(f"  Label: {label}")
+                # Check tensor value range (should be roughly normalized around 0)
+                print(f"  Image Tensor Min value: {image_tensor.min():.4f}")
+                print(f"  Image Tensor Max value: {image_tensor.max():.4f}")
+                print(f"  Image Tensor Mean value: {image_tensor.mean():.4f}")
+
+            else:
+                print("!!! Failed to load first item (returned None). Check __getitem__ logic.")
+
+            # Optional: Test another item
+            print("\nAttempting to load another item (Index 100)...")
+            image_tensor_100, label_100 = train_dataset[100]
+            if image_tensor_100 is not None:
+                 print("Successfully loaded item at Index 100.")
+                 print(f"  Label: {label_100}")
+            else:
+                 print("!!! Failed to load item at Index 100.")
+
+        else:
+            print("Dataset is empty, cannot test __getitem__.")
+
     except Exception as e:
-        print(f"Error during dataset testing: {e}")
+        print(f"\n!!! Error during dataset testing: {e}")
+        # Print traceback for more details during debugging
+        import traceback
+        traceback.print_exc()
