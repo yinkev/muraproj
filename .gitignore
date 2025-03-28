@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*build*/
+*dist*/
+*.egg-info/
+
+# Virtual Environment
+.venv/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Large Data (Uncomment if MURA data is inside project folder)
+# MURA-v1.1/
+
+# Large Model Files (Good practice)
+*.pth
+*.pt
+*.onnx
