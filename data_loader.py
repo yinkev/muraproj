@@ -1,3 +1,4 @@
+import numpy as np
 import torchvision.transforms as transforms
 import torch
 from torch.utils.data import Dataset
@@ -12,7 +13,7 @@ class MuraDataset(Dataset):
     Loads image paths and study labels, maps them, and provides
     images and labels for training/validation.
     """
-    def __init__(self, csv_image_paths, csv_study_labels, base_data_path, transform=None):
+    def __init__(self, csv_image_paths, csv_study_labels, base_data_path, transform=None, patient_ids_to_include=None):
         """
         Args:
             csv_image_paths (string): Path to the csv file with image paths.
@@ -27,27 +28,47 @@ class MuraDataset(Dataset):
 
         # --- Load CSVs ---
         try:
-            self.df_img_paths = pd.read_csv(csv_image_paths, header=None, names=['image_path'])
+            self.df_img_paths_all = pd.read_csv(csv_image_paths, header=None, names=['image_path'])
             self.df_study_labels = pd.read_csv(csv_study_labels, header=None, names=['study_path', 'label'])
             print("CSVs loaded successfully in Dataset.")
         except FileNotFoundError as e:
             print(f"!!! ERROR in Dataset init: Could not load CSVs: {e}")
             raise # Re-raise the error to stop execution if files aren't found
 
-        self.base_data_path = base_data_path # Store base path if needed (depends on CSV content)
-        self.transform = transform # Store transform function (for preprocessing/augmentation)
+        self.base_data_path = base_data_path
+        self.transform = transform
 
-        # --- TODO: Map image paths to labels ---
-        # We need to create a list or structure (e.g., self.image_label_list)
-        # where each entry contains:
-        # 1. The full path to an individual image.
-        # 2. The corresponding study label (0 or 1).
-        # This will likely involve iterating through self.df_img_paths,
-        # extracting the study path for each image, and looking up the
-        # label in self.df_study_labels.
+        # --- Filter by Patient IDs (if provided) ---
+        if patient_ids_to_include is not None:
+            print(f"Filtering dataset to include {len(patient_ids_to_include)} specific patients...")
+            # Define a function to extract patient ID from image path
+            # Assumes path format like '.../patientXXXXX/studyY/imageZ.png'
+            def extract_patient_id(path):
+                # Find the part containing 'patient' and extract the number
+                parts = path.split('/')
+                for part in parts:
+                    if part.startswith('patient'):
+                        return part # Return the full patient string e.g., 'patient00001'
+                return None # Return None if pattern not found
+
+            # Apply the function to get patient IDs for all paths
+            self.df_img_paths_all['patient_id'] = self.df_img_paths_all['image_path'].apply(extract_patient_id)
+
+            # Filter the DataFrame
+            self.df_img_paths = self.df_img_paths_all[self.df_img_paths_all['patient_id'].isin(patient_ids_to_include)].copy()
+            # Drop the temporary patient_id column after filtering
+            self.df_img_paths.drop(columns=['patient_id'], inplace=True)
+            print(f"Filtered down to {len(self.df_img_paths)} image paths.")
+            if len(self.df_img_paths) == 0:
+                print("!!! WARNING: Filtering resulted in zero image paths!")
+        else:
+            # If no patient IDs provided, use all paths
+            print("No patient ID filter applied, using all paths from CSV.")
+            self.df_img_paths = self.df_img_paths_all
 
         # --- Map image paths to labels ---
         print("Mapping image paths to study labels...")
+        # (The rest of the mapping code remains the same as before)
         self.image_label_list = []
         # Create a dictionary for fast lookup of study labels {study_path: label}
         # Ensure study paths from CSV have a trailing slash if needed for matching

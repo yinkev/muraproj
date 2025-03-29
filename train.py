@@ -1,4 +1,4 @@
-
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix
 import pandas as pd
 import numpy as np
@@ -36,6 +36,8 @@ def parse_args():
                         help='Freeze convolutional layers (only train classifier).')
     parser.add_argument('--device', type=str, default='auto',
                         help="Device to use ('cpu', 'cuda', 'mps', or 'auto').")
+    parser.add_argument('--load_checkpoint', type=str, default=None,
+                    help='Path to checkpoint file to load model weights from.')
     # Add more arguments as needed (e.g., model choice, optimizer choice)
     args = parser.parse_args()
     return args
@@ -190,6 +192,31 @@ def main(args):
         pretrained=True,
         freeze_layers=args.freeze # Control freezing via command line
     )
+
+    # --- Load Checkpoint (if specified) ---
+    start_epoch = 0 # Default start epoch
+    if args.load_checkpoint and os.path.exists(args.load_checkpoint):
+        print(f"Loading checkpoint: {args.load_checkpoint}")
+        try:
+            checkpoint = torch.load(args.load_checkpoint, map_location='cpu', weights_only=False) # Load to CPU first, allow non-weights
+            model.load_state_dict(checkpoint['model_state_dict'])
+            # Optionally load optimizer state and start epoch (useful for resuming)
+            # optimizer.load_state_dict(checkpoint['optimizer_state_dict']) # We might use a different optimizer/LR now
+            start_epoch = checkpoint.get('epoch', 0) # Get epoch number if saved
+            best_val_metric_loaded = checkpoint.get('best_val_metric', -1.0) # Get best metric if saved
+            print(f"Checkpoint loaded successfully. Resuming from epoch {start_epoch + 1}. Previous best val metric: {best_val_metric_loaded:.4f}")
+            # Update best_val_metric if resuming (careful if changing metric)
+            # best_val_metric = best_val_metric_loaded # Uncomment if resuming exactly
+        except Exception as e:
+            print(f"!!! Error loading checkpoint: {e}. Starting training from scratch.")
+            start_epoch = 0 # Reset epoch if loading failed
+    else:
+        if args.load_checkpoint:
+            print(f"!!! Checkpoint file not found: {args.load_checkpoint}. Starting training from scratch.")
+        else:
+            print("No checkpoint specified, starting training from scratch.")
+    # ------------------------------------
+    
     model.to(device) # Move model to the selected device (GPU/CPU)
     print("Model initialized and moved to device.")
 
@@ -197,22 +224,38 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
     print("Loss function: CrossEntropyLoss")
 
-    # Define optimizer - only pass trainable parameters
-    # If freezing, only optimize the classifier head (model.fc)
-    # If not freezing, optimize all parameters
-    if args.freeze:
-         print("Optimizing only the parameters of the final classifier layer.")
-         optimizer = optim.AdamW(model.fc.parameters(), lr=args.lr)
-    else:
-         print("Optimizing all model parameters.")
-         optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    # Define optimizer - pass trainable parameters based on the current state
+    # After loading checkpoint, model might have different trainable params than initial state
+    params_to_optimize = [p for p in model.parameters() if p.requires_grad]
+    if len(params_to_optimize) == 0:
+        print("!!! ERROR: No trainable parameters found in the model!")
+        return # Exit if nothing to train
+
+    num_trainable = sum(p.numel() for p in params_to_optimize)
+    print(f"Optimizing {len(params_to_optimize)} parameter groups with {num_trainable:,} total trainable parameters.")
+
+    optimizer = optim.AdamW(params_to_optimize, lr=args.lr)
     print(f"Optimizer: AdamW, Learning Rate: {args.lr}")
+
+    # --- Add Learning Rate Scheduler ---
+    # Reduce LR when validation AUC plateaus
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='max',      # Monitor the max value of the metric (AUC)
+        factor=0.1,      # Reduce LR by a factor of 10 (0.1)
+        patience=3,      # Wait for 3 epochs with no improvement before reducing LR
+        verbose=True     # Print a message when LR is reduced
+    )
+    print(f"Scheduler: ReduceLROnPlateau (factor=0.1, patience=3, mode='max')")
+    # ---------------------------------
 
     # --- Training Loop ---
     print("\n--- Starting Training Loop ---")
-    best_val_metric = -1.0 # Placeholder for tracking best model (e.g., use AUC or accuracy)
+    best_val_metric = -1.0
+    if 'best_val_metric_loaded' in locals(): # Check if loaded from checkpoint
+        best_val_metric = best_val_metric_loaded
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs): # Start from loaded epoch
         print(f"\nEpoch {epoch+1}/{args.epochs}")
 
         # --- Training Phase ---
@@ -310,17 +353,37 @@ def main(args):
 
         # Use AUC as the metric to track for saving the best model
         current_val_metric = val_auc # Or use val_accuracy if AUC fails initially
+
+        # --- Step the LR Scheduler ---
+        scheduler.step(current_val_metric)
+        # ---------------------------
+
         # ------------------------------------
 
         # --- Save Checkpoint ---
-        # TODO: Save checkpoint periodically and save the best model based on validation metric
-        print("!!! TODO: Implement checkpoint saving (best model based on val_metric) !!!")
-        # Example:
-        # if current_val_metric > best_val_metric:
-        #     best_val_metric = current_val_metric
-        #     save_path = os.path.join(args.output_dir, 'best_model.pth')
-        #     torch.save(model.state_dict(), save_path)
-        #     print(f"Saved new best model to {save_path}")
+        # Save the model if the current validation metric is the best seen so far
+        if current_val_metric > best_val_metric:
+            best_val_metric = current_val_metric
+            save_path = os.path.join(args.output_dir, 'best_model_checkpoint.pth')
+            try:
+                # Save model state dict, optimizer state, epoch, and best metric
+                torch.save({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'best_val_metric': best_val_metric,
+                    'loss': epoch_loss_val, # Save validation loss too
+                    'args': args # Save arguments for reference
+                }, save_path)
+                print(f"Validation metric improved to {best_val_metric:.4f}. Saved new best model to {save_path}")
+            except Exception as e:
+                print(f"!!! Error saving checkpoint: {e}")
+
+        # Optional: Save checkpoint after every N epochs regardless of performance
+        # save_path_latest = os.path.join(args.output_dir, 'latest_model_checkpoint.pth')
+        # torch.save({ ... similar dict ... }, save_path_latest)
+        # print(f"Saved latest checkpoint to {save_path_latest}")
+        # -----------------------
 
 
     print("\n--- Training Finished ---")
