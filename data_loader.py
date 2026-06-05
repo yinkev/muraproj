@@ -4,6 +4,7 @@ import torch
 from torch.utils.data import Dataset
 import pandas as pd
 import os
+import argparse
 # We'll likely use PIL (Pillow) for image loading as it integrates well with torchvision transforms
 from PIL import Image # Use Pillow (PIL)
 
@@ -165,11 +166,8 @@ class MuraDataset(Dataset):
                 # Which is os.path.join(base_path, img_path)
                 # This seems less likely given our setup. Let's stick to the first case for now and test.
 
-                # Let's simplify based on our known path:
-                # base_data_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1'
-                # img_path = 'MURA-v1.1/train/XR_SHOULDER/...'
-                # We need '/Users/kyin/Desktop/muraproj/MURA-v1.1/train/XR_SHOULDER/...'
-                # So, remove 'MURA-v1.1/' from img_path and join with base_data_path
+                # If base_data_path points directly at MURA-v1.1, remove the
+                # leading folder name before joining.
                 relative_img_path = img_path.split('/', 1)[1] # Split only on the first '/'
                 full_img_path = os.path.join(self.base_data_path, relative_img_path)
 
@@ -208,8 +206,15 @@ class MuraDataset(Dataset):
 # Example usage and testing
 if __name__ == '__main__':
     print("\n--- Testing MuraDataset ---")
-    # Replace with actual paths for testing
-    base_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1' # Your path
+    parser = argparse.ArgumentParser(description="Smoke-test MuraDataset path loading.")
+    parser.add_argument(
+        "--data_dir",
+        required=True,
+        help="Path to the extracted MURA-v1.1 dataset directory.",
+    )
+    args = parser.parse_args()
+
+    base_path = args.data_dir
     train_img_csv = os.path.join(base_path, 'train_image_paths.csv')
     train_lbl_csv = os.path.join(base_path, 'train_labeled_studies.csv')
 

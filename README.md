@@ -26,24 +26,31 @@ This project applies deep learning techniques, specifically transfer learning wi
 
 ## Setup
 
+1. Clone the repository:
+
 ```bash
-**1. Clone Repository:**
-git clone https://github.com/yinkev/muraproj.git # Use your actual repo URL
+git clone https://github.com/yinkev/muraproj.git
 cd muraproj
+```
 
-**2. Create Virtual Environment (using venv):**
+2. Create a virtual environment:
+
+```bash
 python3 -m venv .venv
-source .venv/bin/activate  # On Linux/macOS
-# or .\.venv\Scripts\activate  # On Windows
+source .venv/bin/activate
+```
 
-**3. Install Dependencies:**
+3. Install dependencies:
+
+```bash
 pip install --upgrade pip
 pip install -r requirements.txt
+```
 
-**4. Download Data:**
-Download the MURA dataset from the official source (requires DUA).
-Extract the MURA-v1.1 folder.
-Important: Update the --data_dir argument in the train.py and evaluate.py scripts (or pass it via command line) to point to the full path of the extracted MURA-v1.1 folder.
+4. Download the MURA dataset from the official source. Access requires the Stanford ML Group data use agreement. Extract the `MURA-v1.1` folder and pass its path with `--data_dir`.
+
+```bash
+python explore_data.py --data_dir /path/to/MURA-v1.1
 ```
 
 ## Usage
@@ -150,3 +157,7 @@ OpenCV-Python
 Scikit-learn
 tqdm
 tabulate (for explore_data.py)
+
+## License
+
+MIT

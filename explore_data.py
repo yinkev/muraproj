@@ -1,11 +1,16 @@
 import pandas as pd
 import os
+import argparse
 
-# --- IMPORTANT: REPLACE WITH YOUR ACTUAL PATH TO THE MURA FOLDER ---
-# Example: mura_data_base_path = '/Users/kyin/Downloads/MURA-v1.1'
-# Example: mura_data_base_path = '/Volumes/ExternalDrive/MURA-v1.1'
-mura_data_base_path = '/Users/kyin/Desktop/muraproj/MURA-v1.1'
-# -------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="Explore the Stanford MURA dataset CSV files.")
+parser.add_argument(
+    "--data_dir",
+    required=True,
+    help="Path to the extracted MURA-v1.1 dataset directory.",
+)
+args = parser.parse_args()
+
+mura_data_base_path = args.data_dir
 
 print(f"Attempting to load data from: {mura_data_base_path}")
 
